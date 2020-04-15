@@ -1,0 +1,379 @@
+---
+title: "babyNamesPlots"
+author: "Gabriela"
+date: "2/18/2020"
+output: html_document
+---
+
+```{r include=FALSE}
+library(tidyverse)
+library(ggplot2)
+library(plotly)
+library(scales)
+library(gganimate)
+library(ggthemes)
+library(gifski)
+library(png)
+library(patchwork)
+library(viridisLite)
+library(leaflet)
+library(rgdal)
+library(maptools)
+library(broom)
+library(rgeos)
+library(raster)
+```
+
+```{r eval=FALSE}
+
+baby.names %>%
+dplyr::distinct(.,region) %>%
+        arrange(.,region)
+
+#The baby names dataset does not include Corse
+
+```
+
+
+```{r include=FALSE}
+#Data import and processing
+.homeFiles <- "/Users/gabrielabazan/Data Projects/Baby Names - France/"
+
+#Import Data
+
+baby.names.orig <- data.table::fread(paste0(.homeFiles,"Data/dpt2018.csv"))
+names(baby.names.orig) <- c("sex","name","year","dep","countof")
+
+#Names database - CSV
+baby.names <- data.table::fread(paste0(.homeFiles,"Data/dpt2018.csv"))
+names(baby.names) <- c("sex","name","year","dep","countof")
+#View(head(baby.names))
+
+#Department reference table - XLS
+departments <- readxl::read_excel(paste0(.homeFiles,"Data/departements-francais.xls"))
+names(departments) <- c("dep","dep_name","region",
+               "chef_lieu","superficie","population",
+               "density")
+
+#The year field has a value XXXX that needs to be reviewed
+baby.names %>%
+        group_by(year) %>%
+        tally() -> count_by_year
+#~36K records have the XXXX values, since it's 1%, I will drop those records
+baby.names %>%
+        dplyr::filter(.,year != 'XXXX') %>%
+        dplyr::filter(.,name != '_PRENOMS_RARES')-> baby.names
+
+#check for null values in all columns
+#sum(is.na(baby.names$countof))
+
+#bring the department and region name to the baby.names table
+baby.names %>%
+        left_join(.,departments,by="dep") %>%
+        select(.,sex,name,year,countof,dep,dep_name,region) -> baby.names
+#View(baby.names)
+
+#Add decade fiel
+baby.names %>%
+  mutate(
+    decade= as.numeric(year) - (as.numeric(year) %% 10)
+  ) -> baby.names
+
+#Top 10 baby names by year
+baby.names %>%
+        select(.,sex,name,year,countof) %>%
+        group_by(sex,year,name) %>%
+        summarise(
+                totcount=sum(countof)
+        ) %>%
+        arrange(.,desc(totcount)) %>%
+        arrange(.,year) %>%
+        arrange(.,sex) -> baby.names.year 
+
+baby.names.year %>%
+        top_n(n = 10, wt = totcount) -> top10.year
+
+```
+
+```{r}
+#Overall baby names trend - and by Gender - considering original dataset
+
+baby.names.orig %>%
+  group_by(year,sex) %>%
+    summarize(
+      tot_by_year=sum(countof)
+    ) -> total.by.sex.year
+
+baby.names.orig %>%
+  group_by(year) %>%
+    summarize(
+      tot_by_year=sum(countof)
+    ) %>%
+  dplyr::filter(year!='XXXX') -> total.by.year
+
+total.by.year.plot <-  ggplot(total.by.year,aes(x=year,y=tot_by_year))+
+  geom_line(color="#69b3a2", aes(group=1)) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle=90, size=5))
+
+
+total.by.yg.plot <-  ggplot(total.by.year,aes(x=year,y=tot_by_year,fill=sex))+
+  geom_area()
+
+
+
+```
+
+
+Jean et Marie sont les prénoms les plus populairesen France pour la période 1900 - 2018.
+
+Les chiffres sont exprimés en millions.
+
+```{r echo=FALSE}
+#Top 10 names by sex
+baby.names %>%
+        group_by(name, sex) %>%
+        summarise(
+        totalcount = sum(countof)
+        ) -> count.alltime
+
+#Top 10
+count.alltime %>%
+        group_by(sex) %>%
+        top_n(.,n=10,wt=totalcount) %>%
+        arrange(.,sex,desc(totalcount)) -> top10.sex
+
+top.male <- top10.sex %>%
+        filter(.,sex==1)
+
+top.male$name <- factor(top.male$name, levels = top.male$name[order(top.male$totalcount)])
+
+top.female <- top10.sex %>%
+        filter(.,sex==2)
+
+top.female$name <- factor(top.female$name, levels = top.female$name[order(top.female$totalcount)])
+
+
+#Horizontal Bar Charts
+male.plot <- ggplot(top.male, aes(x=name, y=totalcount,label=sprintf("%0.2f", round(totalcount/1000000, digits = 2)))) +
+  geom_bar(stat="identity",width = 0.7, alpha=.8, fill="#29AF7FFF") +
+ geom_text(
+    size=3, hjust=1.1, vjust=0.5,color="white"
+  ) + 
+  coord_flip() +
+  labs(x="Prénom",y="Count") +
+scale_y_continuous(labels = comma) +
+  theme_bw() +
+        theme(
+    panel.grid.major.y = element_blank(),
+    panel.border = element_blank(),
+    axis.ticks.y = element_blank(),
+    axis.text.x = element_blank()
+  ) 
+
+female.plot <- ggplot(top.female, aes(x=name, y=totalcount,label=sprintf("%0.2f", round(totalcount/1000000, digits = 2)))) +
+  geom_bar(stat="identity",width = 0.7, alpha=.8, fill="#481568FF") +
+ geom_text(
+    size=3, hjust=1.1, vjust=0.5,color="white"
+  ) + 
+  coord_flip() +
+  labs(x="Prénom",y="Count") +
+scale_y_continuous(labels = comma) +
+  theme_bw() +
+        theme(
+    panel.grid.major.y = element_blank(),
+    panel.border = element_blank(),
+    axis.ticks.y = element_blank(),
+    axis.text.x = element_blank()
+  ) 
+
+#male.plotly <- ggplotly(male.plot)
+#female.plotly <- ggplotly(female.plot)
+
+male.plot + female.plot
+
+```
+
+
+```{r}
+#Chercher un nom et un an et un department
+
+#str_detect(name, "LORIANE") & region=="Hauts-de-France"
+
+#Filters
+name_filter <- "gabrielle"
+sex_filter <- 2
+#region_filter <- ""
+#dep_filter <- ""
+decade_filter <- 1980 #NULL
+year_filter <- NULL #"1982"
+
+#baby.names %>%
+#  dplyr::filter(.,sex==2 & str_detect(name, "LEYNA") & year=="1984" & #region=="Occitanie") -> baby.filter
+
+#baby.filter
+
+#Q: How popular is my name accross time?
+#Name trend chart - only filter used here is the  name and sex - limit to 1960 onwards
+#generate dataset for chart
+
+name.trend.filter <- baby.names %>%
+  dplyr::filter(.,sex==sex_filter & str_detect(name,toupper(name_filter)) & year>="1960") %>%
+  mutate(name_filter=toupper(name_filter)) %>%
+  group_by(year,name_filter) %>%
+  summarize(
+    name_count=sum(countof)
+  ) 
+
+name.trend.filter
+
+#Line chart
+
+name.trend.plot <- name.trend.filter %>% ggplot(.,aes(year,name_count)) +
+  geom_line(color="#69b3a2",aes(group=1)) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle=90, size=6)) +
+  labs(x="Year",y="Name Count")
+
+name.trend.plot
+
+#Q: How popular is my name accross regions in an specific year? - Show map
+#Show map with total number of people
+
+if(is.null(decade_filter)) {
+name.map.filter <- baby.names %>%
+  dplyr::filter(.,sex==sex_filter & str_detect(name,toupper(name_filter)) & year==year_filter) %>%
+  mutate(name_filter=toupper(name_filter)) %>%
+  group_by(year,name_filter,region) %>%
+  summarize(
+    name_count=sum(countof)
+    )
+} else {
+  name.map.filter <- baby.names %>%
+  dplyr::filter(.,sex==sex_filter & str_detect(name,toupper(name_filter)) & decade==decade_filter) %>%
+  mutate(name_filter=toupper(name_filter)) %>%
+  group_by(decade,name_filter,region) %>%
+  summarize(
+    name_count=sum(countof)
+    )
+}
+
+name.map.filter
+
+#Building map
+
+
+```
+
+
+
+
+
+Pour evaluer l'évolution et le changement de l'ultilisation de prénoms dans le temps on peut régarder le prénoms le plus populaires per décennie.
+
+```{r}
+
+baby.names %>%
+  mutate(
+    decade=as.numeric(year)-as.numeric(year) %% 10
+  ) %>%
+  group_by(sex,decade,name) %>%
+  summarise(
+    name_count=sum(countof)
+  ) %>%
+  top_n(.,n=10,wt=name_count) -> top10.by.decade
+
+top10.by.decade$name=as.factor(top10.by.decade$name)
+
+top10.male.d <- dplyr::filter(top10.by.decade,sex==1)
+top10.female.d <- dplyr::filter(top10.by.decade,sex==2)
+
+#Order for chart
+#top10.male.d$name <- factor(top10.male.d$name, levels = #top10.male.d$name[order(top10.male.d$totalcount)])
+
+#Create a variable to show the top 10 place by decade
+top10.male.d %>% 
+  group_by(decade) %>%
+  arrange(.,decade,desc(name_count)) %>%
+  group_by(decade) %>%
+  mutate(
+      name_order = row_number()
+  ) -> top10.male.d
+
+top10.male.d.plot <- top10.male.d %>% 
+    ggplot(.,aes(x=name_order, y=name_count,label=sprintf("%0.2f", round(name_count/1000, digits= 2)))) +
+    geom_bar(stat="identity",width = 0.7, alpha=.8, fill="#29AF7FFF") +
+    facet_wrap(~decade,ncol = 4, scales="free_y") +
+    scale_x_continuous(
+      breaks = top10.male.d$name_order,
+      labels = top10.male.d$name,
+      expand = c(0,0)
+    ) +
+    geom_text(size=3, hjust=1.1, vjust=0.5,color="white") + 
+    coord_flip() +
+    labs(x="Prénom",y="Count") +
+    scale_y_continuous(labels = comma) +
+    theme_bw() +
+    theme(
+      panel.grid.major.y = element_blank(),
+      panel.border = element_blank(),
+      axis.ticks.y = element_blank()
+    ) 
+  
+
+```
+
+
+On peut voir 
+
+
+```{r eval=FALSE}
+#Create an animated bar chart to show top ten by year
+#Use top10.names table
+
+top10.year$year=as.numeric(top10.year$year)
+
+female.toptime <- ggplot(dplyr::filter(top10.year,sex==2),aes(x=reorder(name,totcount),y=totcount)) +
+        geom_tile(aes(y = totcount/2,
+                height = totcount,
+                width = 0.9), alpha = 0.8, color = NA) +
+        #geom_bar(stat="identity") +
+        coord_flip(clip = "off", expand = TRUE) +
+        transition_states(year, transition_length = 4, state_length = 1) +
+        ease_aes('sine-in-out')
+        #transition_time(year) +
+        #labs(title = "Year: {frame_time}")
+
+female.toptime
+
+animate(female.toptime, nframes = 350,fps = 25,  width = 1200, height = 1000, 
+        renderer = gifski_renderer("gganim.gif"))
+
+```
+
+```{r}
+#Count of names by year
+
+baby.names %>%
+  group_by(sex,year,name)  %>%
+  summarise(
+   name_count=sum(countof) 
+  ) -> names.byYear
+
+names.byYear.fem <- dplyr::filter(names.byYear,sex==2)
+names.byYear.male <- dplyr::filter(names.byYear,sex==1)
+
+top10.fem<-names.byYear.fem %>% top_n(.,n=10,wt=name_count)
+
+byYear.fem.plot <- top10.fem %>% ggplot(.,aes(x=as.numeric(year),y=name_count,color=name,group=name))+
+  geom_line() +
+  scale_color_viridis_d() +
+  theme_bw() +
+  theme(legend.position = "none")
+
+byYear.fem.plotly <- ggplotly(byYear.fem.plot)
+
+byYear.fem.plotly                           
+
+```
+
